@@ -4,16 +4,13 @@ param (
   $UninstallSpotifyStoreEdition = (Read-Host -Prompt 'Uninstall Spotify Windows Store edition if it exists (Y/N)') -eq 'y',
   [Parameter()]
   [switch]
-  $UpdateSpotify,
-  [Parameter()]
-  [switch]
-  $RemoveAdPlaceholder = (Read-Host -Prompt 'Optional - Remove ad placeholder and upgrade button. (Y/N)') -eq 'y'
+  $UpdateSpotify
 )
 
 # Ignore errors from `Stop-Process`
 $PSDefaultParameterValues['Stop-Process:ErrorAction'] = [System.Management.Automation.ActionPreference]::SilentlyContinue
 
-[System.Version] $minimalSupportedSpotifyVersion = '1.1.73.517'
+[System.Version] $minimalSupportedSpotifyVersion = '1.2.8.923'
 
 function Get-File
 {
@@ -106,17 +103,9 @@ function Test-SpotifyVersion
 }
 
 Write-Host @'
-*****************
-@mrpond message:
-#Thailand #ThaiProtest #ThailandProtest #freeYOUTH
-Please retweet these hashtag, help me stop dictator government!
-*****************
-'@
-
-Write-Host @'
-*****************
+**********************************
 Authors: @Nuzair46, @KUTlime
-*****************
+**********************************
 '@
 
 $spotifyDirectory = Join-Path -Path $env:APPDATA -ChildPath 'Spotify'
@@ -165,24 +154,13 @@ catch
   exit
 }
 
-Write-Host "Downloading latest patch (chrome_elf.zip)...`n"
-$elfPath = Join-Path -Path $PWD -ChildPath 'chrome_elf.zip'
-try
-{
-  $uri = 'https://github.com/mrpond/BlockTheSpot/releases/latest/download/chrome_elf.zip'
-  Get-File -Uri $uri -TargetFile "$elfPath"
-}
-catch
-{
-  Write-Output $_
-  Start-Sleep
-}
-
-Expand-Archive -Force -LiteralPath "$elfPath" -DestinationPath $PWD
-Remove-Item -LiteralPath "$elfPath" -Force
-
 $spotifyInstalled = Test-Path -LiteralPath $spotifyExecutable
-$unsupportedClientVersion = ($actualSpotifyClientVersion | Test-SpotifyVersion -MinimalSupportedVersion $minimalSupportedSpotifyVersion) -eq $false
+
+if (-not $spotifyInstalled) {
+  $unsupportedClientVersion = $true
+} else {
+  $unsupportedClientVersion = ($actualSpotifyClientVersion | Test-SpotifyVersion -MinimalSupportedVersion $minimalSupportedSpotifyVersion) -eq $false
+}
 
 if (-not $UpdateSpotify -and $unsupportedClientVersion)
 {
@@ -198,7 +176,11 @@ if (-not $spotifyInstalled -or $UpdateSpotify -or $unsupportedClientVersion)
   $spotifySetupFilePath = Join-Path -Path $PWD -ChildPath 'SpotifyFullSetup.exe'
   try
   {
-    $uri = 'https://download.scdn.co/SpotifyFullSetup.exe'
+    if ([Environment]::Is64BitOperatingSystem) { # Check if the computer is running a 64-bit version of Windows
+      $uri = 'https://download.scdn.co/SpotifyFullSetupX64.exe'
+    } else {
+      $uri = 'https://download.scdn.co/SpotifyFullSetup.exe'
+    }
     Get-File -Uri $uri -TargetFile "$spotifySetupFilePath"
   }
   catch
@@ -240,112 +222,67 @@ if (-not $spotifyInstalled -or $UpdateSpotify -or $unsupportedClientVersion)
     Start-Sleep -Milliseconds 100
   }
 
-  # Create a Shortcut to Spotify in %APPDATA%\Microsoft\Windows\Start Menu\Programs and Desktop
-  # (allows the program to be launched from search and desktop)
-  $wshShell = New-Object -ComObject WScript.Shell
-
-  $desktopShortcutPath = "$env:USERPROFILE\Desktop\Spotify.lnk"
-  if ((Test-Path $desktopShortcutPath) -eq $false)
-  {
-    $desktopShortcut = $wshShell.CreateShortcut($desktopShortcutPath)
-    $desktopShortcut.TargetPath = "$env:APPDATA\Spotify\Spotify.exe"
-    $desktopShortcut.Save()
-  }
-
-  $startMenuShortcutPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Spotify.lnk"
-  if ((Test-Path $startMenuShortcutPath) -eq $false)
-  {
-    $startMenuShortcut = $wshShell.CreateShortcut($startMenuShortcutPath)
-    $startMenuShortcut.TargetPath = "$env:APPDATA\Spotify\Spotify.exe"
-    $startMenuShortcut.Save()
-  }
-
 
   Write-Host 'Stopping Spotify...Again'
 
   Stop-Process -Name Spotify
   Stop-Process -Name SpotifyWebHelper
-  Stop-Process -Name SpotifyFullSetup
+  if ([Environment]::Is64BitOperatingSystem) { # Check if the computer is running a 64-bit version of Windows
+    Stop-Process -Name SpotifyFullSetupX64
+  } else {
+     Stop-Process -Name SpotifyFullSetup
+  }
 }
-$elfDllBackFilePath = Join-Path -Path $spotifyDirectory -ChildPath 'chrome_elf_bak.dll'
-$elfBackFilePath = Join-Path -Path $spotifyDirectory -ChildPath 'chrome_elf.dll'
-if ((Test-Path $elfDllBackFilePath) -eq $false)
+
+Write-Host "Downloading latest patch (chrome_elf.zip)...`n"
+$elfPath = Join-Path -Path $PWD -ChildPath 'chrome_elf.zip'
+try
 {
-  Move-Item -LiteralPath "$elfBackFilePath" -Destination "$elfDllBackFilePath" | Write-Verbose
+  $bytes = [System.IO.File]::ReadAllBytes($spotifyExecutable)
+  $peHeader = [System.BitConverter]::ToUInt16($bytes[0x3C..0x3D], 0)
+  $is64Bit = $bytes[$peHeader + 4] -eq 0x64
+
+  if ($is64Bit) {
+    $uri = 'https://github.com/mrpond/BlockTheSpot/releases/latest/download/chrome_elf.zip'
+  } else {
+    Write-Host 'At the moment, the ad blocker may not work properly as the x86 architecture has not received a new update.'
+    $uri = 'https://github.com/mrpond/BlockTheSpot/releases/download/2023.5.20.80/chrome_elf.zip'
+  }
+
+  Get-File -Uri $uri -TargetFile "$elfPath"
 }
+catch
+{
+  Write-Output $_
+  Start-Sleep
+}
+
+Expand-Archive -Force -LiteralPath "$elfPath" -DestinationPath $PWD
+Remove-Item -LiteralPath "$elfPath" -Force
 
 Write-Host 'Patching Spotify...'
-$patchFiles = (Join-Path -Path $PWD -ChildPath 'chrome_elf.dll'), (Join-Path -Path $PWD -ChildPath 'config.ini')
+$patchFiles = (Join-Path -Path $PWD -ChildPath 'dpapi.dll'), (Join-Path -Path $PWD -ChildPath 'config.ini')
 
 Copy-Item -LiteralPath $patchFiles -Destination "$spotifyDirectory"
+Remove-Item -LiteralPath (Join-Path -Path $spotifyDirectory -ChildPath 'blockthespot_settings.json') -Force -ErrorAction SilentlyContinue
 
-if ($RemoveAdPlaceholder)
-{
-  $xpuiBundlePath = Join-Path -Path $spotifyApps -ChildPath 'xpui.spa'
-  $xpuiUnpackedPath = Join-Path -Path (Join-Path -Path $spotifyApps -ChildPath 'xpui') -ChildPath 'xpui.js'
-  $fromZip = $false
-
-  # Try to read xpui.js from xpui.spa for normal Spotify installations, or
-  # directly from Apps/xpui/xpui.js in case Spicetify is installed.
-  if (Test-Path $xpuiBundlePath)
-  {
-    Add-Type -Assembly 'System.IO.Compression.FileSystem'
-    Copy-Item -Path $xpuiBundlePath -Destination "$xpuiBundlePath.bak"
-
-    $zip = [System.IO.Compression.ZipFile]::Open($xpuiBundlePath, 'update')
-    $entry = $zip.GetEntry('xpui.js')
-
-    # Extract xpui.js from zip to memory
-    $reader = New-Object System.IO.StreamReader($entry.Open())
-    $xpuiContents = $reader.ReadToEnd()
-    $reader.Close()
-
-    $fromZip = $true
-  }
-  elseif (Test-Path $xpuiUnpackedPath)
-  {
-    Copy-Item -LiteralPath $xpuiUnpackedPath -Destination "$xpuiUnpackedPath.bak"
-    $xpuiContents = Get-Content -LiteralPath $xpuiUnpackedPath -Raw
-
-    Write-Host 'Spicetify detected - You may need to reinstall BTS after running "spicetify apply".';
-  }
-  else
-  {
-    Write-Host 'Could not find xpui.js, please open an issue on the BlockTheSpot repository.'
-  }
-
-  if ($xpuiContents)
-  {
-    # Replace ".ads.leaderboard.isEnabled" + separator - '}' or ')'
-    # With ".ads.leaderboard.isEnabled&&false" + separator
-    $xpuiContents = $xpuiContents -replace '(\.ads\.leaderboard\.isEnabled)(}|\))', '$1&&false$2'
-
-    # Delete ".createElement(XX,{(spec:X),?onClick:X,className:XX.X.UpgradeButton}),X()"
-    $xpuiContents = $xpuiContents -replace '\.createElement\([^.,{]+,{(?:spec:[^.,]+,)?onClick:[^.,]+,className:[^.]+\.[^.]+\.UpgradeButton}\),[^.(]+\(\)', ''
-
-    # Disable Premium NavLink button
-    $xpuiContents = $xpuiContents -replace 'return (.\(\).createElement\("a".+?"noopener nofollow")', '$1'
-
-    if ($fromZip)
-    {
-      # Rewrite it to the zip
-      $writer = New-Object System.IO.StreamWriter($entry.Open())
-      $writer.BaseStream.SetLength(0)
-      $writer.Write($xpuiContents)
-      $writer.Close()
-
-      $zip.Dispose()
-    }
-    else
-    {
-      Set-Content -LiteralPath $xpuiUnpackedPath -Value $xpuiContents
-    }
-  }
-}
-else
-{
-  Write-Host "Won't remove ad placeholder and upgrade button.`n"
-}
+# function Install-VcRedist {
+#   $architecture = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
+#   # https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170
+#   $vcRedistUrl = "https://aka.ms/vs/17/release/vc_redist.$($architecture).exe"
+#   $registryPath = "HKLM:\Software\Microsoft\VisualStudio\14.0\VC\Runtimes\$architecture"
+#   $installedVersion = [version]((Get-ItemProperty $registryPath -ErrorAction SilentlyContinue).Version).Substring(1)
+#   $latestVersion = [version]"14.40.33810.0"
+# 
+#   if ($installedVersion -lt $latestVersion) {
+#       $vcRedistFile = Join-Path -Path $PWD -ChildPath "vc_redist.$architecture.exe"
+#       Write-Host "Downloading and installing vc_redist.$architecture.exe..."
+#       Get-File -Uri $vcRedistUrl -TargetFile $vcRedistFile
+#       Start-Process -FilePath $vcRedistFile -ArgumentList "/install /quiet /norestart" -Wait
+#   }
+# }
+# 
+# Install-VcRedist
 
 $tempDirectory = $PWD
 Pop-Location
@@ -356,11 +293,3 @@ Write-Host 'Patching Complete, starting Spotify...'
 
 Start-Process -WorkingDirectory $spotifyDirectory -FilePath $spotifyExecutable
 Write-Host 'Done.'
-
-Write-Host @'
-*****************
-@mrpond message:
-#Thailand #ThaiProtest #ThailandProtest #freeYOUTH
-Please retweet these hashtag, help me stop dictator government!
-*****************
-'@

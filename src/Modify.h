@@ -1,4 +1,4 @@
 #pragma once
-#include "stdafx.h"
-
-DWORD WINAPI KillBanner (LPVOID);
+DWORD WINAPI EnableDeveloper(LPVOID lpParam);
+DWORD WINAPI BlockAds(LPVOID lpParam);
+DWORD WINAPI BlockBanner(LPVOID lpParam);
